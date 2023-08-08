@@ -14,6 +14,7 @@ from tensorflow import keras
 from keras.models import Model
 from keras.layers import Input, Dense, Embedding, GRU
 from keras.utils import pad_sequences
+from keras.callbacks import ModelCheckpoint
 
 
 df_full = pd.read_csv('data/PHOENIX-2014-T.train.corpus.csv', sep='|')
@@ -153,7 +154,9 @@ model_gru.compile(optimizer = 'adam', loss = 'sparse_categorical_crossentropy', 
 batch_size = 64
 epochs = 10
 
-history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, epochs = epochs, batch_size = batch_size, validation_split = 0.1)
+checkpoint = ModelCheckpoint('best_model_weights.h5', save_best_only=True, save_weights_only=True, monitor='val_loss', mode='min')
+
+history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, epochs = epochs, batch_size = batch_size, validation_split = 0.1, callbacks = [checkpoint])
 #0.853 val_loss, dostignut posle 11 epoha
 #glove embedding input: 0.813 val_loss, 8 epoha
 #glove embedding input fine-tune: 0.795 val_loss, 8 epoha
@@ -161,6 +164,7 @@ history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output
 #Mora dosta predprocesiranja da se ubaci da bi embedding potencijalno lepo radio za target
 #cistio umlaute u glossovanim tekstovima i crticu odvojio od reci: 0.709 val_loss, 7 epoha 
 #Kasnije dobijao oko 0.75 val_loss sa istim setupom?
+model_gru.load_weights('best_model_weights.h5')
 
 model_gru.save('model_gru_newest.h5')
 
