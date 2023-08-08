@@ -12,9 +12,11 @@ from matplotlib import pyplot as plt
 
 from tensorflow import keras
 from keras.models import Model
-from keras.layers import Input, Dense, Embedding, GRU
+from keras.layers import Input, Dense, Embedding, GRU, Bidirectional, Concatenate
 from keras.utils import pad_sequences
 from keras.callbacks import ModelCheckpoint
+from keras.optimizers import Adam
+from nltk.translate.bleu_score import sentence_bleu
 
 
 df_full = pd.read_csv('data/PHOENIX-2014-T.train.corpus.csv', sep='|')
@@ -140,17 +142,20 @@ latent_dim = 512
 
 encoder_input_tensor = Input(shape = (input_pad_len, ))
 encoder_embedding = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = True)(encoder_input_tensor)
-_, state_h = GRU(units = latent_dim, return_state = True,  unroll = False)(encoder_embedding)
+_, forward_state, backward_state = Bidirectional(GRU(units = latent_dim, return_state = True))(encoder_embedding)
+state_h = Concatenate(axis=-1)([forward_state, backward_state])
+#_, state_h = GRU(units = latent_dim, return_state = True, unroll = False)(encoder_embedding)
+#encoder_model = Model(encoder_input_tensor, encoder_output)
 
 decoder_input_tensor = Input(shape = (target_pad_len, ))
 decoder_embedding = Embedding(input_dim = num_target_words + 1, output_dim = embedding_size, mask_zero = True, weights = [target_embedding_matrix], trainable = True)(decoder_input_tensor)
-decoder_outputs, _, = GRU(units = latent_dim, return_sequences = True, return_state = True, unroll = False)(decoder_embedding, initial_state = state_h)
+decoder_outputs, _, = GRU(units = latent_dim*2, return_sequences = True, return_state = True)(decoder_embedding, initial_state = state_h)
 output = Dense(units = num_target_words + 1, activation = 'softmax')(decoder_outputs)
 
 model_gru = Model(inputs = [encoder_input_tensor, decoder_input_tensor], outputs = output)
 #model.summary()
     
-model_gru.compile(optimizer = 'adam', loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
+model_gru.compile(optimizer = Adam(0.0005), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 batch_size = 64
 epochs = 10
 
@@ -164,9 +169,10 @@ history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output
 #Mora dosta predprocesiranja da se ubaci da bi embedding potencijalno lepo radio za target
 #cistio umlaute u glossovanim tekstovima i crticu odvojio od reci: 0.709 val_loss, 7 epoha 
 #Kasnije dobijao oko 0.75 val_loss sa istim setupom?
+#Encoder pretvorio u Bidirectional: 0.744 val_loss
 model_gru.load_weights('best_model_weights.h5')
 
-model_gru.save('model_gru_newest.h5')
+#model_gru.save('model_gru_newest.h5')
 
 #model_gru.evaluate([encoder_input_data, decoder_input_data], decoder_output_data)
 
