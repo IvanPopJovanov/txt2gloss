@@ -50,7 +50,7 @@ umlaut_dict = {'AE': 'Ä',
 for key in umlaut_dict.keys():
     target_texts = [text.replace(key, umlaut_dict[key]) for text in target_texts]
 
-exceptions_dict = {'AKTÜL': 'AKTUELL'}
+#exceptions_dict = {'AKTÜL': 'AKTUELL'}
 
 input_texts_split = [text.split() for text in input_texts]
 target_texts_split = [text.split() for text in target_texts]
@@ -160,6 +160,7 @@ history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output
 #+ glove embedding target fine-tune: 0.798 val_loss, 6 epoha
 #Mora dosta predprocesiranja da se ubaci da bi embedding potencijalno lepo radio za target
 #cistio umlaute u glossovanim tekstovima i crticu odvojio od reci: 0.709 val_loss, 7 epoha 
+#Kasnije dobijao oko 0.75 val_loss sa istim setupom?
 
 model_gru.save('model_gru_newest.h5')
 
@@ -173,6 +174,27 @@ plt.plot(epochs_vals, losses, label='train loss')
 plt.plot(epochs_vals, val_losses, label='validation loss')
 plt.legend(loc='best')
 plt.show()
+
+def translate2(input_sentence):
+    #Code input sentence
+    input_sentence = input_sentence.replace('.', '').replace(',', '').replace('!','').replace('"','').replace('?','').lower()
+    words = input_sentence.split(' ')
+    coded_words =[input_word_index.get(word, 0) for word in words]
+    coded_words = pad_sequences([coded_words], maxlen = input_pad_len, padding = 'post')
+    #Initialize decoder input with starting token
+    decoder_input = np.reshape(target_word_index['<Start>'], (1,1))
+    decoder_input = pad_sequences(decoder_input, target_pad_len, padding = 'post') #Pad decoder_input
+    #Pass through the whole model sequentially:
+    output_sentence = []
+    for i in range(target_pad_len):
+        decoder_output = model_gru.predict([coded_words, decoder_input], verbose = 0)
+        next_word = np.argmax(decoder_output[0, i])
+        if next_word == 0:
+            break
+        output_sentence.append(next_word)
+        if i < target_pad_len - 1:
+            decoder_input[0, i+1] = next_word
+    return ' '.join(inverted_target_word_index[num] for num in output_sentence).replace(' - ', '-')
 
 
 
