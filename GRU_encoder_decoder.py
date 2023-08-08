@@ -15,6 +15,7 @@ from keras.models import Model
 from keras.layers import Input, Dense, Embedding, GRU
 from keras.utils import pad_sequences
 
+
 df_full = pd.read_csv('data/PHOENIX-2014-T.train.corpus.csv', sep='|')
 df = df_full.drop(columns=['name','video','start','end','speaker'])
 data_size = df.shape[1]
@@ -25,7 +26,31 @@ target_texts = df['orth']
 
 #Uradi i analizu karaktera, da li ima cudnih karaktera
 
-target_texts = ['<Start> ' + text + ' <End>' for text in target_texts]
+target_texts = ['<Start> ' + text + '<End>' for text in target_texts]
+
+# =============================================================================
+# counter = 0
+# for text in target_texts:
+#     counter += text.count(' -') + text.count('- ')
+# print(counter) #0
+# 
+# counter = 0
+# for text in target_texts:
+#     counter += text.count('-')
+# print(counter) #1611
+# #Crtica se cesto pojavljuje u znakovnom i prenosi bitno znacenje, trebalo bi da se tretira kao token
+# =============================================================================
+
+
+target_texts = [text.replace('-', ' - ') for text in target_texts]
+
+umlaut_dict = {'AE': 'Ä',
+               'OE': 'Ö',
+               'UE': 'Ü'}
+for key in umlaut_dict.keys():
+    target_texts = [text.replace(key, umlaut_dict[key]) for text in target_texts]
+
+exceptions_dict = {'AKTÜL': 'AKTUELL'}
 
 input_texts_split = [text.split() for text in input_texts]
 target_texts_split = [text.split() for text in target_texts]
@@ -48,10 +73,13 @@ inverted_target_word_index = {value: key for (key,value) in target_word_index.it
 max_input_seq_len = np.max([len(text) for text in input_texts_split])
 max_target_seq_len = np.max([len(text) for text in target_texts_split])
 
+#Pregled najduzih recenica inputa i targeta
+#print(input_texts[np.argmax([len(text) for text in input_texts_split])])
+#print(target_texts[np.argmax([len(text) for text in target_texts_split])]) #Ista recenica
+
 input_pad_len = max_input_seq_len
 target_pad_len = max_target_seq_len 
 #Treba ova 2 staviti na vecu vrednost da bi model radio sa duzim recenicama
-#Ispada 52 i 32, ovo mi je sumnjivo veliko, istrazi
 
 encoder_input_data = []
 for text in input_texts_split:
@@ -108,15 +136,14 @@ for i in range(num_target_words):
 #Model
 #tf.random.set_seed(1)
 latent_dim = 512
-embedding_size = 300
 
 encoder_input_tensor = Input(shape = (input_pad_len, ))
 encoder_embedding = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = True)(encoder_input_tensor)
-_, state_h = GRU(units = latent_dim, return_state = True,  unroll = True)(encoder_embedding)
+_, state_h = GRU(units = latent_dim, return_state = True,  unroll = False)(encoder_embedding)
 
 decoder_input_tensor = Input(shape = (target_pad_len, ))
 decoder_embedding = Embedding(input_dim = num_target_words + 1, output_dim = embedding_size, mask_zero = True, weights = [target_embedding_matrix], trainable = True)(decoder_input_tensor)
-decoder_outputs, _, = GRU(units = latent_dim, return_sequences = True, return_state = True, unroll = True)(decoder_embedding, initial_state = state_h)
+decoder_outputs, _, = GRU(units = latent_dim, return_sequences = True, return_state = True, unroll = False)(decoder_embedding, initial_state = state_h)
 output = Dense(units = num_target_words + 1, activation = 'softmax')(decoder_outputs)
 
 model_gru = Model(inputs = [encoder_input_tensor, decoder_input_tensor], outputs = output)
@@ -124,13 +151,19 @@ model_gru = Model(inputs = [encoder_input_tensor, decoder_input_tensor], outputs
     
 model_gru.compile(optimizer = 'adam', loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 batch_size = 64
-epochs = 20
+epochs = 10
 
 history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, epochs = epochs, batch_size = batch_size, validation_split = 0.1)
 #0.853 val_loss, dostignut posle 11 epoha
 #glove embedding input: 0.813 val_loss, 8 epoha
-#glove embedding input fine-tune: 0.795, 8 epoha
-#+ glove embedding target fine-tune: 0.798, 6 epoha
+#glove embedding input fine-tune: 0.795 val_loss, 8 epoha
+#+ glove embedding target fine-tune: 0.798 val_loss, 6 epoha
+#Mora dosta predprocesiranja da se ubaci da bi embedding potencijalno lepo radio za target
+#cistio umlaute u glossovanim tekstovima i crticu odvojio od reci: 0.709 val_loss, 7 epoha 
+
+model_gru.save('model_gru_newest.h5')
+
+#model_gru.evaluate([encoder_input_data, decoder_input_data], decoder_output_data)
 
 epochs_vals = range(0, epochs)
 losses=history.history['loss']
@@ -140,3 +173,9 @@ plt.plot(epochs_vals, losses, label='train loss')
 plt.plot(epochs_vals, val_losses, label='validation loss')
 plt.legend(loc='best')
 plt.show()
+
+
+
+
+
+               

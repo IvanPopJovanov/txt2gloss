@@ -76,11 +76,11 @@ embedding_size = 300
 
 encoder_input_tensor = Input(shape = (input_pad_len, ))
 encoder_embedding = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True)(encoder_input_tensor)
-_, state_h = GRU(units = latent_dim, return_state = True,  unroll = True)(encoder_embedding)
+_, state_h = GRU(units = latent_dim, return_state = True,  unroll = False)(encoder_embedding)
 
 decoder_input_tensor = Input(shape = (target_pad_len, ))
 decoder_embedding = Embedding(input_dim = num_target_words + 1, output_dim = embedding_size, mask_zero = True)(decoder_input_tensor)
-decoder_outputs, _, = GRU(units = latent_dim, return_sequences = True, return_state = True, unroll = True)(decoder_embedding, initial_state = state_h)
+decoder_outputs, _, = GRU(units = latent_dim, return_sequences = True, return_state = True, unroll = False)(decoder_embedding, initial_state = state_h)
 output = Dense(units = num_target_words + 1, activation = 'softmax')(decoder_outputs)
 
 model_gru = Model(inputs = [encoder_input_tensor, decoder_input_tensor], outputs = output)
@@ -92,7 +92,7 @@ epochs = 10
 history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, epochs = epochs, batch_size = batch_size, validation_split = 0.1, sample_weight = sample_weight)
 #0.853 val_loss, dostignut posle 11 epoha
 
-model_gru.save('model_gru.h5')
+#model_gru.save('model_gru.h5')
 
 
 def test_loss():
