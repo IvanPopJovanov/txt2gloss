@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 
 from tensorflow import keras
 from keras.models import Model
-from keras.layers import Input, Dense, Embedding, GRU, Bidirectional, Concatenate
+from keras.layers import Input, Dense, Embedding, GRU, Bidirectional, Concatenate, Dropout
 from keras.utils import pad_sequences
 from keras.callbacks import ModelCheckpoint
 from keras.optimizers import Adam
@@ -138,11 +138,14 @@ for i in range(num_target_words):
 
 #Model
 #tf.random.set_seed(1)
-latent_dim = 512
+latent_dim = 64
 
 encoder_input_tensor = Input(shape = (input_pad_len, ))
 encoder_embedding = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = True)(encoder_input_tensor)
-_, forward_state, backward_state = Bidirectional(GRU(units = latent_dim, return_state = True))(encoder_embedding)
+encoder_output_1, encoder_state_1 = GRU(units = latent_dim, return_state=True, return_sequences=True)(encoder_embedding)
+_, forward_state, backward_state = Bidirectional(GRU(units = latent_dim, return_state = True))(encoder_output_1, initial_state=[encoder_state_1,encoder_state_1])
+# forward_state = Dropout(0.5)(forward_state)
+# backward_state = Dropout(0.5)(backward_state)
 state_h = Concatenate(axis=-1)([forward_state, backward_state])
 #_, state_h = GRU(units = latent_dim, return_state = True, unroll = False)(encoder_embedding)
 #encoder_model = Model(encoder_input_tensor, encoder_output)
@@ -150,14 +153,15 @@ state_h = Concatenate(axis=-1)([forward_state, backward_state])
 decoder_input_tensor = Input(shape = (target_pad_len, ))
 decoder_embedding = Embedding(input_dim = num_target_words + 1, output_dim = embedding_size, mask_zero = True, weights = [target_embedding_matrix], trainable = True)(decoder_input_tensor)
 decoder_outputs, _, = GRU(units = latent_dim*2, return_sequences = True, return_state = True)(decoder_embedding, initial_state = state_h)
+decoder_outputs = Dropout(0.5)(decoder_outputs)
 output = Dense(units = num_target_words + 1, activation = 'softmax')(decoder_outputs)
 
 model_gru = Model(inputs = [encoder_input_tensor, decoder_input_tensor], outputs = output)
 #model.summary()
     
-model_gru.compile(optimizer = Adam(0.0005), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
+model_gru.compile(optimizer = Adam(0.001), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 batch_size = 64
-epochs = 10
+epochs = 50
 
 checkpoint = ModelCheckpoint('best_model_weights.h5', save_best_only=True, save_weights_only=True, monitor='val_loss', mode='min')
 
