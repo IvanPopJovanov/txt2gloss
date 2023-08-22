@@ -43,10 +43,36 @@ def analyse_texts(input_texts, target_texts):
     input_words = sorted(set([word for text in input_texts_split for word in text]))
     target_words = sorted(set([word for text in target_texts_split for word in text]))
     
-    input_word_index = {word: ind+1 for ind,word in enumerate(input_words)}
+    input_word_counts = {}
+    for s in input_texts_split:
+        for w in s:
+            if w in input_word_counts.keys():
+                input_word_counts[w] += 1
+            else:
+                input_word_counts[w] = 1
+    
+    target_word_counts = {}
+    for s in target_texts_split:
+        for w in s:
+            if w in target_word_counts.keys():
+                target_word_counts[w] += 1
+            else:
+                target_word_counts[w] = 1
+    
+    for word in input_words:
+        if input_word_counts[word] == 1:
+            input_words.remove(word)
+    
+    for word in target_words:
+        if target_word_counts[word] == 1:
+            target_words.remove(word)
+    
+    input_word_index = {word: ind+2 for ind,word in enumerate(input_words)}
     input_word_index[''] = 0
-    target_word_index = {word: ind+1 for ind,word in enumerate(target_words)}
+    input_word_index['<Unknown>'] = 1
+    target_word_index = {word: ind+2 for ind,word in enumerate(target_words)}
     target_word_index[''] = 0
+    target_word_index['<Unknown>'] = 1
     
     return [input_word_index, target_word_index, max_input_seq_len, max_target_seq_len]
 
@@ -79,27 +105,31 @@ def create_model_data(input_texts, target_texts, input_word_index, target_word_i
    
     encoder_input_data = []
     for text in input_texts_split:
-       encoder_input_data.append([input_word_index.get(word, 0) for word in text])
+       encoder_input_data.append([input_word_index.get(word, 1) for word in text])
     encoder_input_data = pad_sequences(encoder_input_data, input_pad_len, padding = 'post')
 
     decoder_input_data = []
     decoder_output_data = []
     for text in target_texts_split:
-        decoder_input_data.append([target_word_index.get(word, 0) for word in text])
-        decoder_output_data.append([target_word_index.get(word,0) for word in text[1:]]) 
+        decoder_input_data.append([target_word_index.get(word, 1) for word in text])
+        decoder_output_data.append([target_word_index.get(word, 1) for word in text[1:]]) 
     decoder_input_data = pad_sequences(decoder_input_data, target_pad_len, padding = 'post', truncating = 'post')
     decoder_output_data = pad_sequences(decoder_output_data, target_pad_len, padding = 'post', truncating = 'post')
     
     return [encoder_input_data, decoder_input_data, decoder_output_data]
 
-df_full = pd.read_csv('data/PHOENIX-2014-T.train.corpus.csv', sep='|')
-df = df_full.drop(columns=['name','video','start','end','speaker'])
-train_size = df.shape[0]
+df_train = pd.read_csv('data/PHOENIX-2014-T.train.corpus.csv', sep='|')
+df_train = df_train.drop(columns=['name','video','start','end','speaker'])
+train_size = df_train.shape[0]
 #Orth je glossovana recenica, translation je originalna engleska
 
 df_val = pd.read_csv('data/PHOENIX-2014-T.dev.corpus.csv', sep = '|')
 df_val.drop(columns = ['name', 'video', 'start', 'end', 'speaker'], inplace = True)
 val_size = df_val.shape[0]
+
+df_test = pd.read_csv('data/PHOENIX-2014-T.test.corpus.csv', sep = '|')
+df_test.drop(columns = ['name', 'video', 'start', 'end', 'speaker'], inplace = True)
+test_size = df_test.shape[0]
 
 
 #Uradi i analizu karaktera, da li ima cudnih karaktera
@@ -138,10 +168,10 @@ val_size = df_val.shape[0]
 
 
 embedding_size = 300
-input_texts, target_texts = clean_texts(df)
+input_texts, target_texts = clean_texts(df_train)
 input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
-input_pad_len = max_input_seq_len
-target_pad_len = max_target_seq_len
+input_pad_len = 80
+target_pad_len = 60
 num_input_words = len(input_word_index) - 1
 num_target_words = len(target_word_index) - 1
 inverted_input_word_index = {value: key for key,value in input_word_index.items()}
@@ -171,11 +201,11 @@ output = Dropout(0.5)(decoder_outputs)
 output = Dense(units = num_target_words + 1, activation = 'softmax')(decoder_outputs)
 
 model_gru = Model(inputs = [encoder_input_tensor, decoder_input_tensor], outputs = output)
-#model.summary()
+#model_gru.summary()
     
-model_gru.compile(optimizer = Adam(0.0001), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
+model_gru.compile(optimizer = Adam(0.0002), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 batch_size = 128
-epochs = 20
+epochs = 5
 
 checkpoint = ModelCheckpoint('best_model_weights.h5', save_best_only=True, save_weights_only=True, monitor='val_loss', mode='min')
 
@@ -191,6 +221,10 @@ history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output
 #Sada iste performanse ima i sa 256 latent_dim, kompleksnost modela nadoknadjuje manjak dimenzija
 #256 latent_dim, dropout 0.5 u svakom gru i posle decoder_outputa, end token popravljen: 0.712
 #512 latend_dim, ostalo isto, 0.72 val_loss
+#256, promenjen target_pad_len na fiksnih 60, 0.433 val_loss, 36/60 * 0.712 = 0.427 za referencu
+#zaseban validacioni, nepoznate reci na praznine, 0.364, praznine ignorise kad racuna loss
+#zaseban validacioni, mapiranje reci koje se jednom pojavljuju na <Unknown>
+
 model_gru.load_weights('best_model_weights.h5')
 
 model_gru.save('model_gru_newest.h5')
@@ -210,7 +244,7 @@ def translate2(input_sentence):
     #Code input sentence
     input_sentence = input_sentence.replace('.', '').replace(',', '').replace('!','').replace('"','').replace('?','').lower()
     words = input_sentence.split(' ')
-    coded_words =[input_word_index.get(word, 0) for word in words]
+    coded_words =[input_word_index.get(word, 1) for word in words]
     coded_words = pad_sequences([coded_words], maxlen = input_pad_len, padding = 'post')
     #Initialize decoder input with starting token
     decoder_input = np.reshape(target_word_index['<Start>'], (1,1))
@@ -220,14 +254,27 @@ def translate2(input_sentence):
     for i in range(target_pad_len):
         decoder_output = model_gru.predict([coded_words, decoder_input], verbose = 0)
         next_word = np.argmax(decoder_output[0, i])
-        if next_word == 0:
+        if next_word == target_word_index['<End>']:
             break
         output_sentence.append(next_word)
         if i < target_pad_len - 1:
             decoder_input[0, i+1] = next_word
     return ' '.join(inverted_target_word_index[num] for num in output_sentence).replace(' - ', '-')
 
+test_input_sentences = df_test['translation']
+test_references = df_test['orth']
+umlaut_dict = {'AE': 'Ä',
+               'OE': 'Ö',
+               'UE': 'Ü'}
+for key in umlaut_dict.keys():
+    test_references = [text.replace(key, umlaut_dict[key]) for text in test_references]
+translations = [translate2(input_sentence) for input_sentence in test_input_sentences] #Mnogo sporo, mora da se napravi efikasna verzija
+bleu_scores = [sentence_bleu(reference.split(), translation.split()) for reference, translation in zip(test_references, translations)]
+bleu_final = np.mean(bleu_scores) #Ne radi lepo, daje samo nule.
+    
 
+    
+    
 
 
 
