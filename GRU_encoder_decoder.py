@@ -8,13 +8,15 @@ Created on Fri Aug  4 16:03:37 2023
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import tensorflow_addons as tfa
 from matplotlib import pyplot as plt
+
 
 import time
 from tensorflow import keras
 from keras import backend as K
 from keras.models import Model
-from keras.layers import Input, Dense, Embedding, GRU, Bidirectional, Concatenate, Dropout, Layer, Lambda, Masking
+from keras.layers import Input, Dense, Embedding, GRU, Bidirectional, Concatenate, Dropout, Layer, Add
 from keras.utils import pad_sequences
 from keras.callbacks import ModelCheckpoint
 from keras.optimizers import Adam
@@ -220,8 +222,13 @@ latent_dim = 256
 
 encoder_input_tensor = Input(shape = (input_pad_len, ))
 modified_input = CustomDropout(1.0, 0.05)(encoder_input_tensor)
-encoder_embedding = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = True)(modified_input)
-_, forward_state, backward_state = Bidirectional(GRU(units = latent_dim, return_state = True, dropout = 0.5))(encoder_embedding)
+encoder_embedding_layer = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = False)
+encoder_embedding = encoder_embedding_layer(modified_input)
+outputs = GRU(units = latent_dim, return_sequences = True, dropout = 0.5)(encoder_embedding)
+outputs = Dense(units = embedding_size, activation = 'relu')(outputs)
+outputs = Dropout(0.5)(outputs)
+main_inputs = Add()([encoder_embedding, outputs])
+_, forward_state, backward_state = Bidirectional(GRU(units = latent_dim, return_state = True, dropout = 0.5))(main_inputs)
 state_h = Concatenate(axis=-1)([forward_state, backward_state])
 
 encoder_model = Model(encoder_input_tensor, state_h)
@@ -238,7 +245,7 @@ encoder_model = Model(encoder_input_tensor, state_h)
 # =============================================================================
 
 decoder_input_tensor = Input(shape = (target_pad_len, ))
-decoder_embedding_layer = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = True)
+decoder_embedding_layer = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = False)
 decoder_embedding = decoder_embedding_layer(decoder_input_tensor)
 decoder_GRU_layer = GRU(units = latent_dim*2, return_sequences = True, return_state = True, dropout = 0.5)
 decoder_outputs, _ = decoder_GRU_layer(decoder_embedding, initial_state = state_h)
@@ -247,7 +254,7 @@ decoder_dense_layer = Dense(units = num_target_words + 1, activation = 'softmax'
 output = decoder_dense_layer(output)
 
 model_gru = Model(inputs = [encoder_input_tensor, decoder_input_tensor], outputs = output)
-model_gru.summary()
+#model_gru.summary()
 
 decoder_input_tensor = Input(shape = (1,))
 decoder_state = Input(shape = (latent_dim*2,))
@@ -255,12 +262,34 @@ decoder_outputs, decoder_state_new = decoder_GRU_layer(decoder_embedding_layer(d
 output = decoder_dense_layer(decoder_outputs)
 
 decoder_model = Model(inputs = [decoder_input_tensor, decoder_state], outputs = [output, decoder_state_new])
-   
-model_gru.compile(optimizer = Adam(0.0002), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
+
+
+# =============================================================================
+# embedding_indices = [2,-5]
+# embedding_layers = [model_gru.layers[i] for i in embedding_indices]
+# other_layers = [layer for i, layer in enumerate(model_gru.layers) if i not in embedding_indices]
+# 
+# optimizer1 = Adam(learning_rate = 0.00001)
+# optimizer2 = Adam(learning_rate = 0.0005)
+# optimizers_and_layers = [(optimizer1, embedding_layers),(optimizer2, other_layers)]
+# optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers)
+# =============================================================================
+
+
+model_gru.compile(optimizer = Adam(0.001), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 batch_size = 128
-epochs = 50
+epochs = 30
 
 checkpoint = ModelCheckpoint('best_model_weights.h5', save_best_only=True, save_weights_only=True, monitor='val_loss', mode='min')
+
+history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, epochs = epochs, batch_size = batch_size, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), callbacks = [checkpoint])
+
+model_gru.load_weights('best_model_weights.h5')
+decoder_embedding_layer.trainable = True
+encoder_embedding_layer.trainable = True
+#model_gru.summary()
+model_gru.compile(optimizer = Adam(0.0002), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
+epochs = 20
 
 history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, epochs = epochs, batch_size = batch_size, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), callbacks = [checkpoint])
 #0.853 val_loss, dostignut posle 11 epoha
@@ -278,7 +307,9 @@ history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output
 #zaseban validacioni, nepoznate reci na praznine, 0.364, praznine ignorise kad racuna loss
 #zaseban validacioni, mapiranje reci koje se jednom pojavljuju na <Unknown>, 0.364 val_loss
 #nakon 0.05 dropouta na <Unknown> nad inputima, 0.358 val_loss, sporije dosta konvergira, treba oko 80 epoha
-
+#dodao jos jedan GRU na pocetak encodera, sa residualnom konekcijom na sledeci, 0.368 val_loss
+#dodao dropout na prvi GRU, dodao gust sluj i dropout posle prvog GRU-a, 0.353 val_loss (nije iz prve, vec tek sa default learning_rateom)
+#Smanjio learning_rate za embedding slojeve, probao i da ih zaledim neki broj epoha, ali nije unapredilo model
 
 model_gru.load_weights('best_model_weights.h5')
 
@@ -294,6 +325,8 @@ plt.plot(epochs_vals, losses, label='train loss')
 plt.plot(epochs_vals, val_losses, label='validation loss')
 plt.legend(loc='best')
 plt.show()
+
+
 
 def translate2(input_sentence):
     #Code input sentence
@@ -353,22 +386,25 @@ def translate4(input_sentences):
     return output_sentences
 
 
-test_input_sentences = df_test['translation']
-test_references = df_test['orth']
-umlaut_dict = {'AE': 'Ä',
-               'OE': 'Ö',
-               'UE': 'Ü'}
-for key in umlaut_dict.keys():
-    test_references = [text.replace(key, umlaut_dict[key]) for text in test_references]
-
-print(test_input_sentences[0])
-print(translate4(test_input_sentences[0]))
-print(test_references[0])
-print(sentence_bleu([test_references[0].split()], translate2(test_input_sentences[0]).split(), smoothing_function = SmoothingFunction().method1))
-translations = [translate2(input_sentence) for input_sentence in test_input_sentences] #Mnogo sporo, mora da se napravi efikasna verzija
-bleu_scores = [sentence_bleu([reference.split()], translation.split(), smoothing_function = SmoothingFunction().method7) for reference, translation in zip(test_references, translations)]
-smooth_bleu_final = np.mean(bleu_scores) #Mora smoothing da se stavi, inace izbacuje samo nule
-wer = np.mean([edit_distance(reference.split(), translation.split())/len(reference.split()) for reference, translation in zip(test_references, translations)])
+# =============================================================================
+# test_input_sentences = df_test['translation']
+# test_references = df_test['orth']
+# umlaut_dict = {'AE': 'Ä',
+#                'OE': 'Ö',
+#                'UE': 'Ü'}
+# for key in umlaut_dict.keys():
+#     test_references = [text.replace(key, umlaut_dict[key]) for text in test_references]
+# 
+# 
+# print(test_input_sentences[0])
+# print(translate4(test_input_sentences[0]))
+# print(test_references[0])
+# print(sentence_bleu([test_references[0].split()], translate4(test_input_sentences[0]).split(), smoothing_function = SmoothingFunction().method1))
+# translations = [translate2(input_sentence) for input_sentence in test_input_sentences] #Mnogo sporo, mora da se napravi efikasna verzija
+# bleu_scores = [sentence_bleu([reference.split()], translation.split(), smoothing_function = SmoothingFunction().method7) for reference, translation in zip(test_references, translations)]
+# smooth_bleu_final = np.mean(bleu_scores) #Mora smoothing da se stavi, inace izbacuje samo nule
+# wer = np.mean([edit_distance(reference.split(), translation.split())/len(reference.split()) for reference, translation in zip(test_references, translations)])
+# =============================================================================
     
 # =============================================================================
 # start_time = time.time()
@@ -388,14 +424,5 @@ wer = np.mean([edit_distance(reference.split(), translation.split())/len(referen
 # =============================================================================
 
 
-
-
-dropout_input = Input(shape = (input_pad_len,))
-output = CustomDropout(1.0, 0.5)(dropout_input)
-output = Embedding(input_dim = num_input_words + 1, output_dim = embedding_size, mask_zero = True, weights = [input_embedding_matrix], trainable = False)(output)
-
-dropout_model = Model(dropout_input, output)
-
-dropout_model(encoder_input_data, training = True)
 
                
