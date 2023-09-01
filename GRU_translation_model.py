@@ -26,10 +26,13 @@ from keras.optimizers import Adam
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from nltk import edit_distance
 
+#Mozda resi problem sa memorijom GPU
+gpus = tf.config.experimental.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(gpus[0], True)
+
 checkpoint = ModelCheckpoint('model_weights_{epoch}.h5', save_best_only=False, save_weights_only=True, monitor='val_loss', mode='min')
 #Ckeckpoint se vise ne koristi
-early_stopping = EarlyStopping(patience = 20, restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
-#Postavi patience na 5 kad zavrsis testiranje
+early_stopping = EarlyStopping(patience = 5, restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
 
 #Dropout koji umesto nule, menja inpute sa zadatom vrednoscu
 #Takodje ne reskalira ostale inpute
@@ -254,12 +257,12 @@ class GRU_Translation_Model(Model):
         data_size = encoder_input.shape[0]
         decoder_output = np.zeros((data_size, self.target_pad_len - 1))
         for i in range(self.target_pad_len - 1):
-            decoder_output_temp, decoder_state = self.decoder.predict([decoder_input, decoder_state], verbose = 0)
+            decoder_output_temp, decoder_state = self.decoder.predict([decoder_input, decoder_state], verbose = 1, batch_size = 128)
             next_words = np.argmax(decoder_output_temp, axis = -1)
             decoder_input = next_words
             decoder_output[:, i] = next_words.reshape((data_size,))
         return decoder_output
-       
+   
 def translate_from_text(model, input_sentences, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len):
     input_sentences = [input_sentence.replace('.', '').replace(',', '').replace('!','').replace('"','').replace('?','').lower() for input_sentence in input_sentences]
     data_length = len(input_sentences)
@@ -287,9 +290,50 @@ def evaluate(model, test_input_sentences, test_references, input_word_index, tar
     #metric_dict = {'wer': wer, 'smooth_bleu1': smooth_bleu1, 'smooth_bleu2':smooth_bleu2, 'smooth_bleu3': smooth_bleu3, 'smooth_bleu4': smooth_bleu4}
     return wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1
 
+#Koristi se u cv_evaluate, napravio funkciju jer inace dolazi do prekoracenje GPU RAMa, neko je napisao da je do unakrsne validacije
+def train_and_evaluate(train_data, val_data, epochs = 200, batch_size = 128, learning_rate = 0.001, latent_dim = 256, dropout_rate = 0.5, embedding_learning_rate = 0.001):
+     
+     input_texts, target_texts = clean_texts(train_data.iloc[:,1], train_data.iloc[:,0])
+     input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
+     input_pad_len = 80
+     target_pad_len = 60
+     num_input_words = len(input_word_index) - 1
+     num_target_words = len(target_word_index) - 1
+     #print(num_input_words)
+     inverted_input_word_index = {value: key for key,value in input_word_index.items()}
+     inverted_target_word_index = {value: key for (key,value) in target_word_index.items()}
+     #print(len(inverted_input_word_index))
+     input_embedding_matrix, target_embedding_matrix = load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index)
+     print('Embeddings loaded.')
+     encoder_input_data, decoder_input_data, decoder_output_data = create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len)
+     #print(input_embedding_matrix.shape)
+     
+     input_texts_val, target_texts_val = clean_texts(val_data.iloc[:,1], val_data.iloc[:,0])
+     encoder_input_data_val, decoder_input_data_val, decoder_output_data_val = create_model_data(input_texts_val, target_texts_val, input_word_index, target_word_index, input_pad_len, target_pad_len)
+     
+     #print('Data preprocessed.')
+     model_gru = GRU_Translation_Model(num_input_words, num_target_words, input_embedding_matrix, target_embedding_matrix, latent_dim = latent_dim, dropout_rate = dropout_rate)
+     #print('Model loaded.')
+     other_layers = model_gru.layers[0].layers + model_gru.layers[1].layers #Mora da se prilagodi za transformer
+     embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se prilagoditi svaki put kad se model menja
+
+     optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(learning_rate), other_layers), (Adam(embedding_learning_rate), embedding_layers)])
+     model_gru.compile(optimizer, loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
+     #print('Model compiled.')
+     history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = epochs, batch_size = batch_size, callbacks = [early_stopping], verbose = 1)
+     #print('Model fit.')
+     best_epoch = np.argmin(history.history['val_loss']) + 1
+     
+     #print('Best epoch: ', best_epoch)
+     best_loss = np.min(history.history['val_loss'])
+     #print('Best loss:', best_loss)
+     #print(model_gru.evaluate([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val))
+     
+     wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1 = evaluate(model_gru, input_texts_val, target_texts_val, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len)
+     return best_epoch, best_loss, wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1
 #Trenira po model za svaki fold, racuna WER, smooth BLEU(1,2,3,4), kao i val_loss
 #Model se trenira dok val_loss ne krene da raste, i cuva tezine epohe koja ima najbolji val_loss
-def cv_evaluate(train_val_data, df_folds = None, folds = 5, epochs = 200, batch_size = 128, learning_rate = 0.001, latent_dim = 256, dropout_rate = 0.5, embedding_learning_rate = None):
+def cv_evaluate(train_val_data = None, df_folds = None, folds = 5, epochs = 200, batch_size = 128, learning_rate = 0.001, latent_dim = 256, dropout_rate = 0.5, embedding_learning_rate = None):
     if embedding_learning_rate == None:
         embedding_learning_rate = learning_rate
     if df_folds == None:
@@ -311,43 +355,13 @@ def cv_evaluate(train_val_data, df_folds = None, folds = 5, epochs = 200, batch_
         train_folds_pd = [pd.DataFrame(data = fold) for fold in train_folds]
         train_data = pd.concat(train_folds_pd)
         val_data = pd.DataFrame(df_folds[i])
+        print('Current Latent Dim:', latent_dim)
+        print('Current Dropout Rate: ', dropout_rate)
+        print('Current Fold: {}/{}'.format(i+1, folds))
+        print('Current Learning Rate: ', learning_rate)
+        print('Current Learning Rate Multiplier: ', embedding_learning_rate/learning_rate)
         
-        input_texts, target_texts = clean_texts(train_data.iloc[:,1], train_data.iloc[:,0])
-        input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
-        input_pad_len = 80
-        target_pad_len = 60
-        num_input_words = len(input_word_index) - 1
-        num_target_words = len(target_word_index) - 1
-        print(num_input_words)
-        inverted_input_word_index = {value: key for key,value in input_word_index.items()}
-        inverted_target_word_index = {value: key for (key,value) in target_word_index.items()}
-        print(len(inverted_input_word_index))
-        input_embedding_matrix, target_embedding_matrix = load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index)
-        encoder_input_data, decoder_input_data, decoder_output_data = create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len)
-        print(input_embedding_matrix.shape)
-        
-        input_texts_val, target_texts_val = clean_texts(val_data.iloc[:,1], val_data.iloc[:,0])
-        encoder_input_data_val, decoder_input_data_val, decoder_output_data_val = create_model_data(input_texts_val, target_texts_val, input_word_index, target_word_index, input_pad_len, target_pad_len)
-        
-        print('Data preprocessed.')
-        model_gru = GRU_Translation_Model(num_input_words, num_target_words, input_embedding_matrix, target_embedding_matrix, latent_dim = latent_dim, dropout_rate = dropout_rate)
-        print('Model loaded.')
-        other_layers = model_gru.layers[0].layers + model_gru.layers[1].layers #Mora da se prilagodi za transformer
-        embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se prilagoditi svaki put kad se model menja
-
-        optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(learning_rate), other_layers), (Adam(embedding_learning_rate), embedding_layers)])
-        model_gru.compile(optimizer, loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
-        print('Model compiled.')
-        history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = epochs, batch_size = batch_size, callbacks = [early_stopping], verbose = 1)
-        print('Model fit.')
-        best_epoch = np.argmin(history.history['val_loss']) + 1
-        
-        print('Best epoch: ', best_epoch)
-        best_loss = np.min(history.history['val_loss'])
-        print('Best loss:', best_loss)
-        print(model_gru.evaluate([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val))
-        
-        wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1 = evaluate(model_gru, input_texts_val, target_texts_val, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len)
+        best_epoch, best_loss, wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1 = train_and_evaluate(train_data, val_data, epochs = epochs, batch_size = batch_size, learning_rate = learning_rate, latent_dim = latent_dim, dropout_rate = dropout_rate, embedding_learning_rate = embedding_learning_rate)
         best_epochs.append(best_epoch)
         losses.append(best_loss)
         wers.append(wer)
@@ -376,7 +390,7 @@ def cv_grid_search(df, dropout_rates, latent_dims, epochs = 200, learning_rate =
     smooth_bleu1_matrix = np.zeros((len(latent_dims),len(dropout_rates), folds))
     for i in range(len(latent_dims)):
         for j in range(len(dropout_rates)):
-            best_epochs, losses, wers, smooth_bleu4s, smooth_bleu3s, smooth_bleu2s, smooth_bleu1s = cv_evaluate(df, df_folds = df_folds, folds = folds, epochs = epochs, learning_rate = learning_rate, latent_dim = latent_dims[i], dropout_rate = dropout_rates[j])
+            best_epochs, losses, wers, smooth_bleu4s, smooth_bleu3s, smooth_bleu2s, smooth_bleu1s = cv_evaluate(df_folds = df_folds, folds = folds, epochs = epochs, learning_rate = learning_rate, latent_dim = latent_dims[i], dropout_rate = dropout_rates[j])
             print(losses)
             print(best_epochs)
             loss_matrix[i,j,:] = losses
@@ -415,7 +429,8 @@ folds = 5
 #dropout_rates = [0.1]
 #latent_dims = [16]
 
-metrics = cv_grid_search(df_train_val, dropout_rates, latent_dims, epochs = 1, learning_rate = 0.1, folds = folds)
+#Vrati na 200 epoha
+metrics = cv_grid_search(df_train_val, dropout_rates, latent_dims, epochs = 200, learning_rate = learning_rate, folds = folds)
 average_bleu4 = np.mean(metrics['smooth_bleu4'], axis = -1)
 best_config_index = np.unravel_index(np.argmax(average_bleu4), average_bleu4.shape)
 best_latent_dim = latent_dims[best_config_index[0]]
@@ -432,7 +447,7 @@ for i in range(len(learning_rate_multipliers)):
     total_size = df_np.shape[0]
     fold_size = total_size/folds
     df_folds = [df_np[int(i*fold_size):int((i+1)*fold_size),] for i in range(folds)]
-    best_epochs, _, _, smooth_bleu4s, _, _, _ = cv_evaluate(df_train_val, df_folds, folds = folds, epochs = 1, learning_rate = learning_rate, embedding_learning_rate = learning_rate_multipliers[i]*learning_rate, latent_dim = best_latent_dim, dropout_rate = best_dropout_rate)
+    best_epochs, _, _, smooth_bleu4s, _, _, _ = cv_evaluate(df_train_val, df_folds, folds = folds, epochs = 200, learning_rate = learning_rate, embedding_learning_rate = learning_rate_multipliers[i]*learning_rate, latent_dim = best_latent_dim, dropout_rate = best_dropout_rate)
     best_epoch_array.append(best_epochs)
     bleu4_array.append(smooth_bleu4s)
 
@@ -440,8 +455,9 @@ bleu4_array = np.array(bleu4_array)
 best_epoch_array = np.array(best_epoch_array)
 best_multiplier_index = np.argmax(np.mean(bleu4_array, -1))
 bleu4_avg = np.mean(bleu4_array[best_multiplier_index])
-print("Average BlEU4(smooth) on validation: ", bleu4_avg)
+print("Average BLEU4(smooth) on validation: ", bleu4_avg)
 best_multiplier = learning_rate_multipliers[best_multiplier_index]
+print("Best Multiplier for Embedding Learning Rates:", best_multiplier)
 best_multiplier_epochs = best_epoch_array[best_multiplier_index]
 print('Epochs to convergence on all folds: ', best_multiplier_epochs) #Gledamo koliko je epoha bilo potrebno do konvergencije
 epoch_avg = np.mean(best_multiplier_epochs)#Prosek koristimo za broj epoha treniranja modela na trening i validacionom skupu
@@ -478,7 +494,7 @@ embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se 
 optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(learning_rate), other_layers), (Adam(best_multiplier*learning_rate), embedding_layers)])
 model_for_evaluation.compile(optimizer, loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 
-early_stopping_safe = EarlyStopping(patience = 20, start_from_epoch = int(epoch_avg*0.75), restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
+early_stopping_safe = EarlyStopping(patience = 20, start_from_epoch = int(epoch_avg*0.7), restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
 history = model_for_evaluation.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = 200, batch_size = 128, verbose = 1)
 model_for_evaluation.summary()
 epoch_counter = range(len(history.history['loss']))
@@ -516,8 +532,8 @@ print('BLEU1(smooth): ', smooth_bleu1)
 # #data_size = 2838
 # #data_size = 4258
 # #data_size = 5677
-# data_size = 6092
-# #data_size = 7096
+# #data_size = 6092
+# data_size = 7096
 # 
 # input_texts, target_texts = clean_texts_df(df_train.iloc[:data_size,:])
 # input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
