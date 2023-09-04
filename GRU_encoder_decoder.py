@@ -347,8 +347,8 @@ for i in range(folds):
     #zaseban validacioni, nepoznate reci na praznine, 0.364, praznine ignorise kad racuna loss
     #zaseban validacioni, mapiranje reci koje se jednom pojavljuju na <Unknown>, 0.364 val_loss
     #nakon 0.05 dropouta na <Unknown> nad inputima, 0.358 val_loss, sporije dosta konvergira, treba oko 80 epoha
-    #dodao jos jedan GRU na pocetak encodera, sa residualnom konekcijom na sledeci, 0.368 val_loss
-    #dodao dropout na prvi GRU, dodao gust sluj i dropout posle prvog GRU-a, 0.353 val_loss (nije iz prve, vec tek sa default learning_rateom)
+    #dodao jos jedan GRU na pocetak encodera, sa rezidualnom konekcijom na sledeci, 0.368 val_loss
+    #dodao dropout na prvi GRU, dodao gust sloj i dropout posle prvog GRU-a, 0.353 val_loss (nije iz prve, vec tek sa default learning_rateom)
     #Smanjio learning_rate za embedding slojeve, probao i da ih zaledim neki broj epoha, ali nije unapredilo model
     
     model_gru.load_weights('best_model_weights.h5')

@@ -34,6 +34,9 @@ checkpoint = ModelCheckpoint('model_weights_{epoch}.h5', save_best_only=False, s
 #Ckeckpoint se vise ne koristi
 early_stopping = EarlyStopping(patience = 5, restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
 
+
+embedding_size = 300
+
 #Dropout koji umesto nule, menja inpute sa zadatom vrednoscu
 #Takodje ne reskalira ostale inpute
 #Primena je na tekstualnom inputu, da se reci nasumicno zamene sa <Unknown> tokenom, radi boljeg procesiranja nepoznatih reci
@@ -67,6 +70,10 @@ class CustomDropout(Layer):
         })
         return config
 
+#Cisti zadate input i target tekstove
+#Dodaje <Start> i <End> tokene
+#Pravilno upisuje posebna Nemacka slova
+#Takodje za Glossove crtu odvaja od reci koje spaja, da bi se tretirala kao poseban token
 def clean_texts(input_texts, target_texts):
     target_texts = ['<Start> ' + text + ' <End>' for text in target_texts]
     target_texts = [text.replace('-', ' - ') for text in target_texts]
@@ -78,11 +85,14 @@ def clean_texts(input_texts, target_texts):
         
     return [input_texts, target_texts]
 
+#Wrapper za clean_texts koji se direktno da dataframe primenjuje
 def clean_texts_df(data_frame):
     input_texts = data_frame['translation']
     target_texts = data_frame['orth']
     return clean_texts(input_texts, target_texts)
 
+#Prolazi kroz tekstove i izdvaja iz njih recnik. Reci koje se pojavljuju samo jednom se ignorisu, kasnije se mapiraju na poseban <Unknown> token
+#Takodje belezi maksimalne duzine recenica za input i target
 def analyse_texts(input_texts, target_texts):
     input_texts_split = [text.split() for text in input_texts]
     target_texts_split = [text.split() for text in target_texts]
@@ -125,6 +135,8 @@ def analyse_texts(input_texts, target_texts):
     
     return [input_word_index, target_word_index, max_input_seq_len, max_target_seq_len]
 
+
+#Ucitava pretrenirane glove embedding vektore
 #Potencijalno vrati samo jedan, s obzirom da su prakticno kopije, mozda bude bitno za memoriju
 def load_embedding_data():
     input_word_embeddings = {}
@@ -138,8 +150,10 @@ def load_embedding_data():
             target_word_embeddings[word.upper()] = coefs
     return [input_word_embeddings, target_word_embeddings]
 
-embedding_size = 300
 
+
+#Mapira reci iz recnika na odgovarajuce pretrenirane glove embeddinge
+#Reci koje nemaju odgovarajuci embedding dobijaju nula vektor kao embedding
 def get_embedding_matrices(inverted_input_word_index, inverted_target_word_index, input_word_embeddings, target_word_embeddings):
     num_input_words = len(inverted_input_word_index) - 1
     num_target_words = len(inverted_target_word_index) - 1
@@ -154,6 +168,9 @@ def get_embedding_matrices(inverted_input_word_index, inverted_target_word_index
     
     return [input_embedding_matrix, target_embedding_matrix]
 
+#Ucitava pretrenirane embedding vektora i mapira reci iz recnika na njih
+#U sustini wrapper za load_embedding_data i get_embedding_matrices
+#Prednost je sto ce ovako odmah nakon zavrsetka funkcije da se oslobodi memorije za sve embeddinge, koji zauzimaju oko 6GB
 def load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index):
     input_word_embeddings = {}
     target_word_embeddings = {}
@@ -178,6 +195,7 @@ def load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_
     
     return [input_embedding_matrix, target_embedding_matrix]
 
+#Iz recenica kreira podatke koji su spremni da se unose u model
 def create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len):
     input_texts_split = [text.split() for text in input_texts]
     target_texts_split = [text.split() for text in target_texts]
@@ -197,6 +215,13 @@ def create_model_data(input_texts, target_texts, input_word_index, target_word_i
     
     return [encoder_input_data, decoder_input_data, decoder_output_data]
 
+#Embedding size, input_pad_len i target_pad_len su fiksni
+#Dropout se primenjuje na vise mesta, i svuda je isti dropout_rate
+#Na samom pocetku modelu se primenjuje custom_dropout, kako bi naucio da radi sa <Unknown> tokenom bolje
+#Encoder ima 3 GRU sloja, poslendji je dvosmeran; izmedju svaka 2 postoje rezidualne veze
+#Posto je poslednji sloj decodera dvosmeran GRU, latentna dimenzija dekodera je duplo veca
+#Deocoder ima 2 GRU sloja, izmedju postoje rezidualne veze
+#Metoda translate sekvencijalni prevodi podatke rec po rec, zbog toga poziva dekoder onoliko puta, koliko je maksimalna duzina target recenice
 class GRU_Translation_Model(Model):
     def __init__(self, num_input_words, num_target_words, input_embedding_matrix, target_embedding_matrix, latent_dim = 256, dropout_rate = 0.5, custom_dropout_rate = 0.05):
         super(GRU_Translation_Model, self).__init__()
@@ -257,12 +282,13 @@ class GRU_Translation_Model(Model):
         data_size = encoder_input.shape[0]
         decoder_output = np.zeros((data_size, self.target_pad_len - 1))
         for i in range(self.target_pad_len - 1):
-            decoder_output_temp, decoder_state = self.decoder.predict([decoder_input, decoder_state], verbose = 1, batch_size = 128)
+            decoder_output_temp, decoder_state = self.decoder.predict([decoder_input, decoder_state], verbose = 0, batch_size = 128)
             next_words = np.argmax(decoder_output_temp, axis = -1)
             decoder_input = next_words
             decoder_output[:, i] = next_words.reshape((data_size,))
         return decoder_output
-   
+  
+#Prevodi niz recenica
 def translate_from_text(model, input_sentences, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len):
     input_sentences = [input_sentence.replace('.', '').replace(',', '').replace('!','').replace('"','').replace('?','').lower() for input_sentence in input_sentences]
     data_length = len(input_sentences)
@@ -274,6 +300,7 @@ def translate_from_text(model, input_sentences, input_word_index, target_word_in
     output_sentences = [output_sentence.split('<End>',1)[0].replace(' - ','-') for output_sentence in output_sentences]
     return output_sentences
 
+#Evaluira model - Na osnovu prevoda i referenci vraca 5 razlicitih metrika za kvalitet prevoda: WER, smooth BLEU(1,2,3,4)
 def evaluate(model, test_input_sentences, test_references, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len):
     umlaut_dict = {'AE': 'Ä',
                     'OE': 'Ö',
@@ -290,6 +317,9 @@ def evaluate(model, test_input_sentences, test_references, input_word_index, tar
     #metric_dict = {'wer': wer, 'smooth_bleu1': smooth_bleu1, 'smooth_bleu2':smooth_bleu2, 'smooth_bleu3': smooth_bleu3, 'smooth_bleu4': smooth_bleu4}
     return wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1
 
+#Trenira model na train_data i evaluira ga na val_data
+#Embedding learning rate je poseban learning_rate koji se koristi u embedding slojevima, iz razloga sto oni vec imaju pretrenirane podatke za pocetne vrednosti
+#Model se trenira dok val_loss ne krene da raste, i cuva tezine epohe koja ima najbolji val_loss
 #Koristi se u cv_evaluate, napravio funkciju jer inace dolazi do prekoracenje GPU RAMa, neko je napisao da je do unakrsne validacije
 def train_and_evaluate(train_data, val_data, epochs = 200, batch_size = 128, learning_rate = 0.001, latent_dim = 256, dropout_rate = 0.5, embedding_learning_rate = 0.001):
      
@@ -331,8 +361,10 @@ def train_and_evaluate(train_data, val_data, epochs = 200, batch_size = 128, lea
      
      wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1 = evaluate(model_gru, input_texts_val, target_texts_val, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len)
      return best_epoch, best_loss, wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1
-#Trenira po model za svaki fold, racuna WER, smooth BLEU(1,2,3,4), kao i val_loss
-#Model se trenira dok val_loss ne krene da raste, i cuva tezine epohe koja ima najbolji val_loss
+ 
+
+#Trenira po model za svaki fold, racuna WER, smooth BLEU(1,2,3,4), kao i val_loss i broj epoha do konvergencije
+#Vraca podatke iz svake instance modela, odnosno za svaki fold, da bi se dalje procesirale
 def cv_evaluate(train_val_data = None, df_folds = None, folds = 5, epochs = 200, batch_size = 128, learning_rate = 0.001, latent_dim = 256, dropout_rate = 0.5, embedding_learning_rate = None):
     if embedding_learning_rate == None:
         embedding_learning_rate = learning_rate
@@ -372,7 +404,7 @@ def cv_evaluate(train_val_data = None, df_folds = None, folds = 5, epochs = 200,
     return best_epochs, losses, wers, smooth_bleu4s, smooth_bleu3s, smooth_bleu2s, smooth_bleu1s
 
 #Evaluira modele za razlicite vrednosti latent_dim i dropout_rate
-#U 3d matrici cuva rezultate, trecan dimenzija predstavlja vrednosti za razlicite foldove, uprosecavanjem se dobija zeljena metrika
+#U 3d matrici cuva rezultate, treca dimenzija predstavlja vrednosti za razlicite foldove, uprosecavanjem se dobija zeljena metrika
 #Isto cuva i broj epoha do konvergencije 
 def cv_grid_search(df, dropout_rates, latent_dims, epochs = 200, learning_rate = 0.0002, folds = 5):
     df_np = df.to_numpy()
@@ -404,6 +436,7 @@ def cv_grid_search(df, dropout_rates, latent_dims, epochs = 200, learning_rate =
     metrics_dict = {'loss': loss_matrix, 'epoch': epoch_matrix, 'wer': wer_matrix, 'smooth_bleu4': smooth_bleu4_matrix, 'smooth_bleu3': smooth_bleu3_matrix, 'smooth_bleu2': smooth_bleu2_matrix, 'smooth_bleu1': smooth_bleu1_matrix }
     return metrics_dict
 
+start_time = time.time()
     
 df_train = pd.read_csv('data/PHOENIX-2014-T.train.corpus.csv', sep='|')
 df_train = df_train.drop(columns=['name','video','start','end','speaker'])
@@ -421,6 +454,7 @@ test_size = df_test.shape[0]
 df_train_val = pd.concat([df_train, df_val])
 df_full = pd.concat([df_train_val, df_test])
 
+#Hiperparametri za optimizaciju: dropout rate i latentna dimenzija
 dropout_rates = [0.3, 0.5, 0.7]
 latent_dims = [256, 512]
 learning_rate = 0.0002
@@ -429,12 +463,29 @@ folds = 5
 #dropout_rates = [0.1]
 #latent_dims = [16]
 
-#Vrati na 200 epoha
+#Izvrsava se grid search nad hiperparametrima, i radi se unakrsna validacija za evaluaciju performansi
+#Metrika nad kojom se vrsi selekcija je smooth BLEU4
+
 metrics = cv_grid_search(df_train_val, dropout_rates, latent_dims, epochs = 200, learning_rate = learning_rate, folds = folds)
 average_bleu4 = np.mean(metrics['smooth_bleu4'], axis = -1)
+
+plt.title('Average smooth BLEU4, crossvalidated')
+plt.xlabel('Dropout Rate')
+plt.xticks(range(len(dropout_rates)), dropout_rates)
+plt.ylabel('Latent Dim')
+plt.yticks(range(len(latent_dims)),latent_dims)
+plt.imshow(average_bleu4)
+plt.colorbar()
+plt.show()
+
 best_config_index = np.unravel_index(np.argmax(average_bleu4), average_bleu4.shape)
 best_latent_dim = latent_dims[best_config_index[0]]
 best_dropout_rate = dropout_rates[best_config_index[1]]
+
+#Nakon sto se izaberu dropout rate i latent dim, optimizuje se unakrsnom validacijom i nad parametrom learning_rate_multiplier
+#learning_rate_multiplier predstavlja odnos izmedju stope ucenja embedding slojeve i ostalih slojeva, koji je do sad imao podrazumevanu vrednost 1
+#Ideja je da posto su embedding slojevi pretrenirani, mozda zahtevaju znacajno slabiji learning rate
+#Razlog zasto ovo nije bilo deo grid searcha je vremenski, predugo bi trajalo da se odradi unakrsna validacija za 3*2*5 = 30 razlicitih modela
 
 #learning_rate = 0.1
 learning_rate_multipliers = [0.03, 0.1, 0.3, 1, 3]
@@ -463,13 +514,15 @@ print('Epochs to convergence on all folds: ', best_multiplier_epochs) #Gledamo k
 epoch_avg = np.mean(best_multiplier_epochs)#Prosek koristimo za broj epoha treniranja modela na trening i validacionom skupu
 
 
-#Nasumicno odvajamo mali deo trening skupa za early_stopping
+#Nakon sto su svi hiperparametri odabrani, vrsimo finalnu evaluaciju modela nad test skupom
+#Model se trenira tako sto se odvoji mali deo podataka za evaluaciju tokom treniranja, i zavrsava se trening kada performanse nad ovim skupom krenu da opadaju
+
 df_train_val_np = df_train_val.to_numpy()
 np.random.shuffle(df_train_val_np)
 split_size = 300
 train_data = df_train_val_np[:train_size + val_size - split_size,]
 val_data = df_train_val_np[train_size + val_size - split_size:,]
-input_texts, target_texts = clean_texts(train_data.iloc[:,1], train_data.iloc[:,0])
+input_texts, target_texts = clean_texts(train_data[:,1], train_data[:,0])
 input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
 input_pad_len = 80
 target_pad_len = 60
@@ -480,7 +533,7 @@ inverted_target_word_index = {value: key for (key,value) in target_word_index.it
 input_embedding_matrix, target_embedding_matrix = load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index)
 encoder_input_data, decoder_input_data, decoder_output_data = create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len)
 
-input_texts_val, target_texts_val = clean_texts(val_data.iloc[:,1], val_data.iloc[:,0])
+input_texts_val, target_texts_val = clean_texts(val_data[:,1], val_data[:,0])
 encoder_input_data_val, decoder_input_data_val, decoder_output_data_val = create_model_data(input_texts_val, target_texts_val, input_word_index, target_word_index, input_pad_len, target_pad_len)
 
 input_texts_test, target_texts_test = clean_texts_df(df_test)
@@ -494,8 +547,9 @@ embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se 
 optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(learning_rate), other_layers), (Adam(best_multiplier*learning_rate), embedding_layers)])
 model_for_evaluation.compile(optimizer, loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 
-early_stopping_safe = EarlyStopping(patience = 20, start_from_epoch = int(epoch_avg*0.7), restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
-history = model_for_evaluation.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = 200, batch_size = 128, verbose = 1)
+#stojalo start_from_epoch = int(epoch_avg*0.7), ali iz nekog razloga ne prepoznaje argument
+early_stopping_safe = EarlyStopping(patience = 20, restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
+history = model_for_evaluation.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = 200, batch_size = 128, verbose = 1, callbacks = [early_stopping_safe])
 model_for_evaluation.summary()
 epoch_counter = range(len(history.history['loss']))
 fig, (ax1, ax2) = plt.subplots(2,1)
@@ -508,13 +562,15 @@ ax2.legend()
 
 wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1 = evaluate(model_for_evaluation, input_texts_test, target_texts_test, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len)
 print('Results on test data:')
-print('Word Error Rate: ', wer)
-print('BLEU4(smooth): ', smooth_bleu4)
-print('BLEU3(smooth): ', smooth_bleu3)
-print('BLEU2(smooth): ', smooth_bleu2)
-print('BLEU1(smooth): ', smooth_bleu1)
+print('Word Error Rate: ', wer) #76
+print('BLEU4(smooth): ', smooth_bleu4) #11.7
+print('BLEU3(smooth): ', smooth_bleu3) #17.1
+print('BLEU2(smooth): ', smooth_bleu2) #25.2
+print('BLEU1(smooth): ', smooth_bleu1) #36
 
 
+end_time = time.time()
+print('Total time: ', end_time - start_time)
 
 
 # =============================================================================
