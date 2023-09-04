@@ -23,8 +23,6 @@ from keras.optimizers import Adam
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from nltk import edit_distance
 
-print('proba')
-
 class CustomDropout(Layer):
     def __init__(self, custom_value, rate, **kwargs):
         super(CustomDropout, self).__init__(**kwargs)
