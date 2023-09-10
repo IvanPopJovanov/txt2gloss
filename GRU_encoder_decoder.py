@@ -350,6 +350,7 @@ for i in range(folds):
     #dodao jos jedan GRU na pocetak encodera, sa rezidualnom konekcijom na sledeci, 0.368 val_loss
     #dodao dropout na prvi GRU, dodao gust sloj i dropout posle prvog GRU-a, 0.353 val_loss (nije iz prve, vec tek sa default learning_rateom)
     #Smanjio learning_rate za embedding slojeve, probao i da ih zaledim neki broj epoha, ali nije unapredilo model
+    #512 latent_dim, 0.7 dropout_rate, 3x embedding_lr_multiplier, 0.362 val_loss
     
     model_gru.load_weights('best_model_weights.h5')
     

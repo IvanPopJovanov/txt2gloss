@@ -51,16 +51,8 @@ class CustomDropout(Layer):
             training = K.learning_phase()
     
         if training:
-            def dropped_inputs():
-                return tf.where(tf.logical_and(
-                    tf.random.uniform(shape=tf.shape(inputs)) < self.rate,
-                    inputs != 0),  # Masking zeros
-                    self.custom_value,
-                    inputs)
-            return K.in_train_phase(dropped_inputs, inputs, training=training)
+            return tf.where(tf.logical_and(tf.random.uniform(shape=tf.shape(inputs)) < self.rate, inputs != 0), self.custom_value, inputs)
         return inputs
-
-        return tf.keras.backend.in_train_phase(dropped_inputs, inputs, training=training)
     
     def get_config(self):
         config = super().get_config()
@@ -456,7 +448,7 @@ df_full = pd.concat([df_train_val, df_test])
 
 #Hiperparametri za optimizaciju: dropout rate i latentna dimenzija
 dropout_rates = [0.3, 0.5, 0.7]
-latent_dims = [256, 512]
+latent_dims = [256, 512] #Treba probati i vecu latentnu dimenziju i dropout rate, posto optimalna vrednost ispada najveca
 learning_rate = 0.0002
 folds = 5
 
@@ -488,7 +480,7 @@ best_dropout_rate = dropout_rates[best_config_index[1]]
 #Razlog zasto ovo nije bilo deo grid searcha je vremenski, predugo bi trajalo da se odradi unakrsna validacija za 3*2*5 = 30 razlicitih modela
 
 #learning_rate = 0.1
-learning_rate_multipliers = [0.03, 0.1, 0.3, 1, 3]
+learning_rate_multipliers = [0.03, 0.1, 0.3, 1, 3] #Treba probati i vece vrednosti, posto 3 ispada optimalno (ovo je neocekivano)
 #learning_rate_multipliers = [100]
 best_epoch_array = []
 bleu4_array = []
@@ -583,14 +575,13 @@ print('Total time: ', end_time - start_time)
 # =============================================================================
 
 
-# =============================================================================
 # #data_size = 1419
 # #data_size = 2838
 # #data_size = 4258
 # #data_size = 5677
 # #data_size = 6092
 # data_size = 7096
-# 
+
 # input_texts, target_texts = clean_texts_df(df_train.iloc[:data_size,:])
 # input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
 # input_pad_len = 80
@@ -602,20 +593,24 @@ print('Total time: ', end_time - start_time)
 # inverted_target_word_index = {value: key for (key,value) in target_word_index.items()}
 # input_embedding_matrix, target_embedding_matrix = load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index)
 # encoder_input_data, decoder_input_data, decoder_output_data = create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len)
-# 
+
 # input_texts_val, target_texts_val = clean_texts_df(df_val)
 # encoder_input_data_val, decoder_input_data_val, decoder_output_data_val = create_model_data(input_texts_val, target_texts_val, input_word_index, target_word_index, input_pad_len, target_pad_len)
-# 
+
 # print('Data preprocessed.')
-# model_gru = GRU_Translation_Model(num_input_words, num_target_words, input_embedding_matrix, target_embedding_matrix)
-# 
+# model_gru = GRU_Translation_Model(num_input_words, num_target_words, input_embedding_matrix, target_embedding_matrix, latent_dim = 512, dropout_rate = 0.7)
+
+# other_layers = model_gru.layers[0].layers + model_gru.layers[1].layers
+# embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se prilagoditi svaki put kad se model menja
+# print(embedding_layers)
+
+# optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(0.0002), other_layers), (Adam(0.0006), embedding_layers)])
+
 # model_gru.compile(optimizer = Adam(0.0002), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
-# 
+
 # history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = 500, batch_size = 128, callbacks = [early_stopping], verbose = 1)
 # epochs_to_converge_for_data_size = np.argmin(history.history['val_loss']) + 1
 # print("Number of epochs to converge for data size {} is : {}".format(data_size, epochs_to_converge_for_data_size))
-# =============================================================================
-# =============================================================================
 # epoch_counter = range(len(history.history['loss']))
 # fig, (ax1, ax2) = plt.subplots(2,1)
 # ax1.plot(epoch_counter, history.history['loss'], label = 'Train Loss')
@@ -624,7 +619,7 @@ print('Total time: ', end_time - start_time)
 # ax2.plot(epoch_counter, history.history['acc'], label = 'Train accuracy')
 # ax2.plot(epoch_counter, history.history['val_acc'], label = 'Validation Accuracy', linestyle = 'dashed')
 # ax2.legend()
-# =============================================================================
+# fig.show()
 
 
 
@@ -639,4 +634,5 @@ print('Total time: ', end_time - start_time)
 # embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se prilagoditi svaki put kad se model menja
 # 
 # optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(0.01), other_layers), (Adam(0.0002), embedding_layers)])
+# 
 # =============================================================================
