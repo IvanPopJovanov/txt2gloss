@@ -32,8 +32,7 @@ tf.config.experimental.set_memory_growth(gpus[0], True)
 
 checkpoint = ModelCheckpoint('model_weights_{epoch}.h5', save_best_only=False, save_weights_only=True, monitor='val_loss', mode='min')
 #Ckeckpoint se vise ne koristi
-early_stopping = EarlyStopping(patience = 5, restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
-
+early_stopping = EarlyStopping(patience = 10, restore_best_weights = True, monitor = 'val_loss', mode = 'min', verbose = 1)
 
 embedding_size = 300
 
@@ -447,8 +446,8 @@ df_train_val = pd.concat([df_train, df_val])
 df_full = pd.concat([df_train_val, df_test])
 
 #Hiperparametri za optimizaciju: dropout rate i latentna dimenzija
-dropout_rates = [0.3, 0.5, 0.7]
-latent_dims = [256, 512] #Treba probati i vecu latentnu dimenziju i dropout rate, posto optimalna vrednost ispada najveca
+dropout_rates = [0.5, 0.6, 0.7, 0.8, 0.9]
+latent_dims = [256, 512, 1024] #Treba probati i vecu latentnu dimenziju i dropout rate, posto optimalna vrednost ispada najveca
 learning_rate = 0.0002
 folds = 5
 
@@ -575,51 +574,51 @@ print('Total time: ', end_time - start_time)
 # =============================================================================
 
 
-# #data_size = 1419
-# #data_size = 2838
-# #data_size = 4258
-# #data_size = 5677
-# #data_size = 6092
-# data_size = 7096
+#data_size = 1419
+#data_size = 2838
+#data_size = 4258
+#data_size = 5677
+#data_size = 6092
+data_size = 7096
 
-# input_texts, target_texts = clean_texts_df(df_train.iloc[:data_size,:])
-# input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
-# input_pad_len = 80
-# target_pad_len = 60
-# num_input_words = len(input_word_index) - 1
-# print(num_input_words)
-# num_target_words = len(target_word_index) - 1
-# inverted_input_word_index = {value: key for key,value in input_word_index.items()}
-# inverted_target_word_index = {value: key for (key,value) in target_word_index.items()}
-# input_embedding_matrix, target_embedding_matrix = load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index)
-# encoder_input_data, decoder_input_data, decoder_output_data = create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len)
+input_texts, target_texts = clean_texts_df(df_train.iloc[:data_size,:])
+input_word_index, target_word_index, max_input_seq_len, max_target_seq_len = analyse_texts(input_texts, target_texts)
+input_pad_len = 80
+target_pad_len = 60
+num_input_words = len(input_word_index) - 1
+print(num_input_words)
+num_target_words = len(target_word_index) - 1
+inverted_input_word_index = {value: key for key,value in input_word_index.items()}
+inverted_target_word_index = {value: key for (key,value) in target_word_index.items()}
+input_embedding_matrix, target_embedding_matrix = load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index)
+encoder_input_data, decoder_input_data, decoder_output_data = create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len)
 
-# input_texts_val, target_texts_val = clean_texts_df(df_val)
-# encoder_input_data_val, decoder_input_data_val, decoder_output_data_val = create_model_data(input_texts_val, target_texts_val, input_word_index, target_word_index, input_pad_len, target_pad_len)
+input_texts_val, target_texts_val = clean_texts_df(df_val)
+encoder_input_data_val, decoder_input_data_val, decoder_output_data_val = create_model_data(input_texts_val, target_texts_val, input_word_index, target_word_index, input_pad_len, target_pad_len)
 
-# print('Data preprocessed.')
-# model_gru = GRU_Translation_Model(num_input_words, num_target_words, input_embedding_matrix, target_embedding_matrix, latent_dim = 512, dropout_rate = 0.7)
+print('Data preprocessed.')
+model_gru = GRU_Translation_Model(num_input_words, num_target_words, input_embedding_matrix, target_embedding_matrix, latent_dim = 512, dropout_rate = 0.95)
 
-# other_layers = model_gru.layers[0].layers + model_gru.layers[1].layers
-# embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se prilagoditi svaki put kad se model menja
-# print(embedding_layers)
+other_layers = model_gru.layers[0].layers + model_gru.layers[1].layers
+embedding_layers = [other_layers.pop(2), other_layers.pop(-9)] #Paznja! Mora se prilagoditi svaki put kad se model menja
+print(embedding_layers)
 
-# optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(0.0002), other_layers), (Adam(0.0006), embedding_layers)])
+optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers = [(Adam(0.0002), other_layers), (Adam(0.0006), embedding_layers)])
 
-# model_gru.compile(optimizer = Adam(0.0002), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
+model_gru.compile(optimizer = Adam(0.0002), loss = 'sparse_categorical_crossentropy', metrics = ['acc'])
 
-# history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = 500, batch_size = 128, callbacks = [early_stopping], verbose = 1)
-# epochs_to_converge_for_data_size = np.argmin(history.history['val_loss']) + 1
-# print("Number of epochs to converge for data size {} is : {}".format(data_size, epochs_to_converge_for_data_size))
-# epoch_counter = range(len(history.history['loss']))
-# fig, (ax1, ax2) = plt.subplots(2,1)
-# ax1.plot(epoch_counter, history.history['loss'], label = 'Train Loss')
-# ax1.plot(epoch_counter, history.history['val_loss'], label = 'Validation Loss', linestyle = 'dashed')
-# ax1.legend()
-# ax2.plot(epoch_counter, history.history['acc'], label = 'Train accuracy')
-# ax2.plot(epoch_counter, history.history['val_acc'], label = 'Validation Accuracy', linestyle = 'dashed')
-# ax2.legend()
-# fig.show()
+history = model_gru.fit([encoder_input_data, decoder_input_data], decoder_output_data, validation_data = ([encoder_input_data_val, decoder_input_data_val], decoder_output_data_val), epochs = 500, batch_size = 128, callbacks = [early_stopping], verbose = 1)
+epochs_to_converge_for_data_size = np.argmin(history.history['val_loss']) + 1
+print("Number of epochs to converge for data size {} is : {}".format(data_size, epochs_to_converge_for_data_size))
+epoch_counter = range(len(history.history['loss']))
+fig, (ax1, ax2) = plt.subplots(2,1)
+ax1.plot(epoch_counter, history.history['loss'], label = 'Train Loss')
+ax1.plot(epoch_counter, history.history['val_loss'], label = 'Validation Loss', linestyle = 'dashed')
+ax1.legend()
+ax2.plot(epoch_counter, history.history['acc'], label = 'Train accuracy')
+ax2.plot(epoch_counter, history.history['val_acc'], label = 'Validation Accuracy', linestyle = 'dashed')
+ax2.legend()
+fig.show()
 
 
 
