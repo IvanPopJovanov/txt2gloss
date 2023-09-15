@@ -52,7 +52,8 @@ def clean_texts(input_texts, target_texts):
     target_texts = [text.replace('-', ' - ') for text in target_texts]
     umlaut_dict = {'AE': 'Ä',
                    'OE': 'Ö',
-                   'UE': 'Ü'}
+                   'UE': 'Ü',
+                   'AÜ': 'AUE'}
     for key in umlaut_dict.keys():
         target_texts = [text.replace(key, umlaut_dict[key]) for text in target_texts]
         
@@ -202,8 +203,9 @@ def translate_from_text(model, input_sentences, input_word_index, target_word_in
 #Evaluira model - Na osnovu prevoda i referenci vraca 5 razlicitih metrika za kvalitet prevoda: WER, smooth BLEU(1,2,3,4)
 def evaluate(model, test_input_sentences, test_references, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len):
     umlaut_dict = {'AE': 'Ä',
-                    'OE': 'Ö',
-                    'UE': 'Ü'}
+                   'OE': 'Ö',
+                   'UE': 'Ü',
+                   'AÜ': 'AUE'}
     for key in umlaut_dict.keys():
         test_references = [text.replace(key, umlaut_dict[key]) for text in test_references]
     translations = translate_from_text(model, test_input_sentences, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len)
