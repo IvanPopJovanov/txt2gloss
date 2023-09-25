@@ -18,10 +18,12 @@ from nltk import edit_distance
 
 embedding_size = 300
 
-#Dropout koji umesto nule, menja inpute sa zadatom vrednoscu
-#Takodje ne reskalira ostale inpute
-#Primena je na tekstualnom inputu, da se reci nasumicno zamene sa <Unknown> tokenom, radi boljeg procesiranja nepoznatih reci
 class CustomDropout(Layer):
+    """
+    Dropout koji umesto nule, menja inpute sa zadatom vrednoscu
+    Takodje ne reskalira ostale inpute
+    Primena je na tekstualnom inputu, da se reci nasumicno zamene sa <Unknown> tokenom, radi boljeg procesiranja nepoznatih reci
+    """
     def __init__(self, custom_value, rate, **kwargs):
         super(CustomDropout, self).__init__(**kwargs)
         self.custom_value = custom_value
@@ -43,11 +45,13 @@ class CustomDropout(Layer):
         })
         return config
     
-#Cisti zadate input i target tekstove
-#Dodaje <Start> i <End> tokene
-#Pravilno upisuje posebna Nemacka slova
-#Takodje za Glossove crtu odvaja od reci koje spaja, da bi se tretirala kao poseban token
 def clean_texts(input_texts, target_texts):
+    """
+    Cisti zadate input i target tekstove
+    Dodaje <Start> i <End> tokene
+    Pravilno upisuje posebna Nemacka slova
+    Takodje za Glossove crtu odvaja od reci koje spaja, da bi se tretirala kao poseban token
+    """
     target_texts = ['<Start> ' + text + ' <End>' for text in target_texts]
     target_texts = [text.replace('-', ' - ') for text in target_texts]
     umlaut_dict = {'AE': 'Ä',
@@ -59,15 +63,19 @@ def clean_texts(input_texts, target_texts):
         
     return [input_texts, target_texts]
 
-#Wrapper za clean_texts koji se direktno da dataframe primenjuje
 def clean_texts_df(data_frame):
+    """
+    Wrapper za clean_texts koji se direktno da dataframe primenjuje
+    """
     input_texts = data_frame['translation']
     target_texts = data_frame['orth']
     return clean_texts(input_texts, target_texts)
 
-#Prolazi kroz tekstove i izdvaja iz njih recnik. Reci koje se pojavljuju samo jednom se ignorisu, kasnije se mapiraju na poseban <Unknown> token
-#Takodje belezi maksimalne duzine recenica za input i target
 def analyse_texts(input_texts, target_texts):
+    """
+    Prolazi kroz tekstove i izdvaja iz njih recnik. Reci koje se pojavljuju samo jednom se ignorisu, kasnije se mapiraju na poseban <Unknown> token
+    Takodje belezi maksimalne duzine recenica za input i target
+    """
     input_texts_split = [text.split() for text in input_texts]
     target_texts_split = [text.split() for text in target_texts]
     max_input_seq_len = np.max([len(text) for text in input_texts_split])
@@ -109,9 +117,11 @@ def analyse_texts(input_texts, target_texts):
     
     return [input_word_index, target_word_index, max_input_seq_len, max_target_seq_len]
 
-#Ucitava pretrenirane glove embedding vektore
-#Potencijalno vrati samo jedan, s obzirom da su prakticno kopije, mozda bude bitno za memoriju
 def load_embedding_data():
+    """
+    Ucitava pretrenirane glove embedding vektore
+    Potencijalno vrati samo jedan, s obzirom da su prakticno kopije, mozda bude bitno za memoriju
+    """
     input_word_embeddings = {}
     target_word_embeddings = {}
     with open('glove-embedding/vectors.txt', 'r', encoding = 'utf-8') as f:
@@ -125,9 +135,11 @@ def load_embedding_data():
 
 
 
-#Mapira reci iz recnika na odgovarajuce pretrenirane glove embeddinge
-#Reci koje nemaju odgovarajuci embedding dobijaju nula vektor kao embedding
 def get_embedding_matrices(inverted_input_word_index, inverted_target_word_index, input_word_embeddings, target_word_embeddings):
+    """
+    Mapira reci iz recnika na odgovarajuce pretrenirane glove embeddinge
+    Reci koje nemaju odgovarajuci embedding dobijaju nula vektor kao embedding
+    """
     num_input_words = len(inverted_input_word_index) - 1
     num_target_words = len(inverted_target_word_index) - 1
     
@@ -141,10 +153,12 @@ def get_embedding_matrices(inverted_input_word_index, inverted_target_word_index
     
     return [input_embedding_matrix, target_embedding_matrix]
 
-#Ucitava pretrenirane embedding vektora i mapira reci iz recnika na njih
-#U sustini wrapper za load_embedding_data i get_embedding_matrices
-#Prednost je sto ce ovako odmah nakon zavrsetka funkcije da se oslobodi memorije za sve embeddinge, koji zauzimaju oko 6GB
 def load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_word_index):
+    """
+    Ucitava pretrenirane embedding vektora i mapira reci iz recnika na njih
+    U sustini wrapper za load_embedding_data i get_embedding_matrices
+    Prednost je sto ce ovako odmah nakon zavrsetka funkcije da se oslobodi memorije za sve embeddinge, koji zauzimaju oko 6GB
+    """
     input_word_embeddings = {}
     target_word_embeddings = {}
     with open('glove-embedding/vectors.txt', 'r', encoding = 'utf-8') as f:
@@ -168,8 +182,10 @@ def load_embedding_data_get_matrices(inverted_input_word_index, inverted_target_
     
     return [input_embedding_matrix, target_embedding_matrix] 
 
-#Iz recenica kreira podatke koji su spremni da se unose u model
 def create_model_data(input_texts, target_texts, input_word_index, target_word_index, input_pad_len, target_pad_len):
+    """
+    Iz recenica kreira podatke koji su spremni da se unose u model
+    """
     input_texts_split = [text.split() for text in input_texts]
     target_texts_split = [text.split() for text in target_texts]
    
@@ -188,8 +204,10 @@ def create_model_data(input_texts, target_texts, input_word_index, target_word_i
     
     return [encoder_input_data, decoder_input_data, decoder_output_data]
 
-#Prevodi niz recenica
 def translate_from_text(model, input_sentences, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len):
+    """
+    Prevodi niz recenica
+    """
     input_sentences = [input_sentence.replace('.', '').replace(',', '').replace('!','').replace('"','').replace('?','').lower() for input_sentence in input_sentences]
     data_length = len(input_sentences)
     target_placeholder_sentences = ['']*data_length
@@ -200,8 +218,10 @@ def translate_from_text(model, input_sentences, input_word_index, target_word_in
     output_sentences = [output_sentence.split('<End>',1)[0].replace(' - ','-') for output_sentence in output_sentences]
     return output_sentences
 
-#Evaluira model - Na osnovu prevoda i referenci vraca 5 razlicitih metrika za kvalitet prevoda: WER, smooth BLEU(1,2,3,4)
 def evaluate(model, test_input_sentences, test_references, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len):
+    """
+    Evaluira model - Na osnovu prevoda i referenci vraca 5 razlicitih metrika za kvalitet prevoda: WER, smooth BLEU(1,2,3,4)
+    """
     umlaut_dict = {'AE': 'Ä',
                    'OE': 'Ö',
                    'UE': 'Ü',
@@ -215,5 +235,4 @@ def evaluate(model, test_input_sentences, test_references, input_word_index, tar
     smooth_bleu1 = np.mean([sentence_bleu([reference.split()], translation.split(), smoothing_function = SmoothingFunction().method7, weights = [1]) for reference, translation in zip(test_references, translations)])
     #Smoothing je preporucen za recenice, posebno kratke, a glossovane recenice prirodno imaju manji broj reci
     wer = np.mean([edit_distance(reference.split(), translation.split())/len(reference.split()) for reference, translation in zip(test_references, translations)])
-    #metric_dict = {'wer': wer, 'smooth_bleu1': smooth_bleu1, 'smooth_bleu2':smooth_bleu2, 'smooth_bleu3': smooth_bleu3, 'smooth_bleu4': smooth_bleu4}
     return wer, smooth_bleu4, smooth_bleu3, smooth_bleu2, smooth_bleu1
