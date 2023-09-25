@@ -228,6 +228,9 @@ def evaluate(model, test_input_sentences, test_references, input_word_index, tar
                    'AÜ': 'AUE'}
     for key in umlaut_dict.keys():
         test_references = [text.replace(key, umlaut_dict[key]) for text in test_references]
+    test_references = [text.replace('<Start>', '') for text in test_references]
+    test_references = [text.replace('<End>', '') for text in test_references]
+    test_references = [text.replace(' - ', '-') for text in test_references]
     translations = translate_from_text(model, test_input_sentences, input_word_index, target_word_index, inverted_target_word_index, input_pad_len, target_pad_len)
     smooth_bleu4 = np.mean([sentence_bleu([reference.split()], translation.split(), smoothing_function = SmoothingFunction().method7) for reference, translation in zip(test_references, translations)])
     smooth_bleu3 = np.mean([sentence_bleu([reference.split()], translation.split(), smoothing_function = SmoothingFunction().method7, weights = [1/3, 1/3, 1/3]) for reference, translation in zip(test_references, translations)])
