@@ -9,3 +9,13 @@ Dataset: https://www-i6.informatik.rwth-aachen.de/~koller/RWTH-PHOENIX/
 Članovi tima:
 - Ivan Pop-Jovanov, 1066/2022, https://github.com/IvanPopJovanov
 - Luka Perović, 1003/2022, https://github.com/LukaPerovic
+
+Spisak potrebnih biblioteka: 
+- numpy
+- pandas
+- tensorflow
+- matplotlib
+- tensorflow_addons
+- nltk
+- keras_nlp
+- pydot
